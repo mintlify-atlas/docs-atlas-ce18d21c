@@ -1,0 +1,219 @@
+---
+title: "Distributed locking"
+description: "Prevent concurrent migration runs across multiple application instances using session-level advisory locks or table-based locks."
+---
+
+When you run multiple instances of your application — such as during a rolling deployment — all instances may attempt to run migrations at startup. Without coordination, two instances can apply the same migration concurrently, leading to duplicate-key errors, partial state, or data corruption.
+
+Goose provides two built-in locking mechanisms to solve this. Configure one with `NewProvider` and all migration operations will automatically acquire and release the lock around the critical section.
+
+<Warning>
+  Locking is disabled by default. If you have multiple application instances and run migrations on startup, enable a locking strategy for your database.
+</Warning>
+
+---
+
+## Locking strategies
+
+### SessionLocker
+
+```go
+type SessionLocker interface {
+    SessionLock(ctx context.Context, conn *sql.Conn) error
+    SessionUnlock(ctx context.Context, conn *sql.Conn) error
+}
+```
+
+A `SessionLocker` uses a **single** `*sql.Conn`. Both `SessionLock` and `SessionUnlock` are called on the same connection, so the lock is tied to that connection's session. This maps naturally to database-level session advisory locks (such as PostgreSQL's `pg_advisory_lock`), which are automatically released when the connection closes — even if the process crashes.
+
+**Best suited for:** PostgreSQL.
+
+### Locker
+
+```go
+type Locker interface {
+    Lock(ctx context.Context, db *sql.DB) error
+    Unlock(ctx context.Context, db *sql.DB) error
+}
+```
+
+A `Locker` operates on a `*sql.DB` connection pool. `Lock` and `Unlock` may execute on different physical connections, so the lock cannot rely on connection-scoped state. Instead, a dedicated lock table with a heartbeat/lease mechanism keeps the lock alive.
+
+**Best suited for:** Databases that do not support session-level advisory locks, or scenarios that require longer-lived locks across connection pool rotation.
+
+---
+
+## PostgreSQL session advisory lock
+
+Use `lock.NewPostgresSessionLocker` for PostgreSQL. It calls `pg_try_advisory_lock` to acquire an exclusive session-level lock and retries on failure.
+
+```go
+import (
+    "github.com/pressly/goose/v3"
+    "github.com/pressly/goose/v3/lock"
+)
+
+locker, err := lock.NewPostgresSessionLocker()
+if err != nil {
+    log.Fatal(err)
+}
+
+provider, err := goose.NewProvider(
+    goose.DialectPostgres,
+    db,
+    os.DirFS("migrations"),
+    goose.WithSessionLocker(locker),
+)
+```
+
+### Default behaviour
+
+| Setting | Default |
+|---|---|
+| Lock ID | `4097083626` (crc32 of `"goose"`) |
+| Lock retry interval | 5 seconds |
+| Lock failure threshold | 60 attempts (5 minutes total) |
+| Unlock retry interval | 2 seconds |
+| Unlock failure threshold | 30 attempts (1 minute total) |
+
+The lock is automatically released when the session ends — including on an ungraceful disconnect.
+
+### Configure timeouts
+
+```go
+locker, err := lock.NewPostgresSessionLocker(
+    // Retry every 10 seconds, up to 30 times (5 minutes total).
+    lock.WithLockTimeout(10, 30),
+    // Retry unlock every 2 seconds, up to 30 times.
+    lock.WithUnlockTimeout(2, 30),
+)
+```
+
+### Use a custom lock ID
+
+If you need multiple independent locks in the same database, use a different lock ID for each:
+
+```go
+locker, err := lock.NewPostgresSessionLocker(
+    lock.WithLockID(1234567890),
+)
+```
+
+---
+
+## PostgreSQL table-based lock
+
+Use `lock.NewPostgresTableLocker` for a table-backed lease with a heartbeat. This keeps the lock alive automatically and allows `Lock` and `Unlock` to use different connections.
+
+```go
+locker, err := lock.NewPostgresTableLocker()
+if err != nil {
+    log.Fatal(err)
+}
+
+provider, err := goose.NewProvider(
+    goose.DialectPostgres,
+    db,
+    os.DirFS("migrations"),
+    goose.WithLocker(locker),
+)
+```
+
+### Default behaviour
+
+| Setting | Default |
+|---|---|
+| Lock table | `goose_lock` |
+| Lock ID | `4097083626` (crc32 of `"goose"`) |
+| Lease duration | 30 seconds |
+| Heartbeat interval | 5 seconds |
+| Lock retry interval | 5 seconds, up to 60 attempts (5 minutes) |
+| Unlock retry interval | 2 seconds, up to 30 attempts (1 minute) |
+
+The heartbeat renews the lease every 5 seconds. If the process dies without unlocking, other instances can take the lock after the 30-second lease expires.
+
+### Configure the table locker
+
+```go
+locker, err := lock.NewPostgresTableLocker(
+    // Use a custom lock table name.
+    lock.WithTableName("myapp_lock"),
+    // Use a different lock ID.
+    lock.WithTableLockID(9999),
+    // Keep the lock alive for 60 seconds if heartbeat stops.
+    lock.WithTableLeaseDuration(60 * time.Second),
+    // Renew the lease every 10 seconds.
+    lock.WithTableHeartbeatInterval(10 * time.Second),
+    // Retry acquiring the lock every 5s, up to 120 times (10 minutes).
+    lock.WithTableLockTimeout(5*time.Second, 120),
+    // Retry releasing the lock every 2s, up to 30 times.
+    lock.WithTableUnlockTimeout(2*time.Second, 30),
+    // Custom structured logger.
+    lock.WithTableLogger(slog.Default()),
+    // Custom retry policy: only retry transient errors.
+    lock.WithTableRetryPolicy(func(err error) bool {
+        return isTransient(err)
+    }),
+)
+```
+
+---
+
+## Which methods acquire a lock?
+
+The following Provider methods **do** acquire a lock when one is configured:
+
+- `Up`
+- `UpByOne`
+- `UpTo`
+- `Down`
+- `DownTo`
+- `ApplyVersion`
+- `Status`
+
+The following methods **do not** acquire a lock, by design:
+
+- `HasPending`
+- `GetVersions`
+
+This lets you poll for pending migrations or check versions without blocking on — or being blocked by — a running migration operation.
+
+---
+
+## Database support
+
+| Database | Session advisory lock | Table-based lock |
+|---|---|---|
+| PostgreSQL | `NewPostgresSessionLocker` | `NewPostgresTableLocker` |
+| MySQL | Not supported | Implement `Locker` interface |
+| SQLite | Not supported | Implement `Locker` interface |
+| Others | Not supported | Implement `Locker` interface |
+
+For databases without a built-in advisory lock mechanism, implement the `lock.Locker` interface with your own table or distributed lock (e.g., Redis, etcd) and pass it with `WithLocker`.
+
+---
+
+## Implement a custom locker
+
+Any type that satisfies `lock.Locker` or `lock.SessionLocker` can be passed to the provider:
+
+```go
+type myLocker struct{}
+
+func (l *myLocker) Lock(ctx context.Context, db *sql.DB) error {
+    _, err := db.ExecContext(ctx, "INSERT INTO my_lock (id) VALUES (1)")
+    return err
+}
+
+func (l *myLocker) Unlock(ctx context.Context, db *sql.DB) error {
+    _, err := db.ExecContext(ctx, "DELETE FROM my_lock WHERE id = 1")
+    return err
+}
+
+provider, err := goose.NewProvider(
+    goose.DialectMySQL,
+    db,
+    os.DirFS("migrations"),
+    goose.WithLocker(&myLocker{}),
+)
+```

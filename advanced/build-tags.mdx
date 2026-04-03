@@ -1,0 +1,80 @@
+---
+title: "Build Tags"
+description: "Reduce binary size by excluding database drivers you don't need using Go build tags."
+---
+
+The standard `goose` binary links every supported database driver, which increases the final binary size. If you only need one or two databases, you can exclude the others at compile time using Go build tags.
+
+## Available build tags
+
+Each tag disables the corresponding driver file in `cmd/goose/`:
+
+| Build tag       | Driver excluded                         |
+| --------------- | --------------------------------------- |
+| `no_clickhouse` | ClickHouse                              |
+| `no_libsql`     | Turso / libSQL                          |
+| `no_mssql`      | Microsoft SQL Server                    |
+| `no_mysql`      | MySQL                                   |
+| `no_postgres`   | PostgreSQL                              |
+| `no_sqlite3`    | SQLite3                                 |
+| `no_vertica`    | Vertica (deprecated)                    |
+| `no_ydb`        | YDB                                     |
+
+Each driver file uses a `//go:build !<tag>` constraint, so passing the tag causes the file to be omitted from the build. For example, `driver_postgres.go` starts with:
+
+```go
+//go:build !no_postgres
+```
+
+And `driver_turso.go` (the libSQL/Turso driver) starts with:
+
+```go
+//go:build !no_libsql
+```
+
+## Example build commands
+
+<Tabs>
+  <Tab title="Postgres only">
+    Build a binary that includes only the PostgreSQL driver:
+
+    ```bash
+    go build \
+      -tags='no_clickhouse no_libsql no_mssql no_mysql no_sqlite3 no_ydb' \
+      -o goose \
+      ./cmd/goose
+    ```
+  </Tab>
+  <Tab title="SQLite + Postgres">
+    A lightweight build suitable for local development and CI:
+
+    ```bash
+    go build \
+      -tags='no_clickhouse no_libsql no_mssql no_mysql no_ydb' \
+      -o goose \
+      ./cmd/goose
+    ```
+  </Tab>
+  <Tab title="No built-in drivers">
+    Build a binary with no compiled-in drivers. Use this when you supply your own `database/sql` driver via a Go migration or a wrapper binary:
+
+    ```bash
+    go build \
+      -tags='no_clickhouse no_libsql no_mssql no_mysql no_postgres no_sqlite3 no_ydb' \
+      -o goose \
+      ./cmd/goose
+    ```
+  </Tab>
+</Tabs>
+
+## Checking available drivers at runtime
+
+<Tip>
+  Run `goose beta drivers` to print the database drivers that were compiled into your binary. This is useful for verifying that a custom build includes (or excludes) exactly the drivers you expect.
+
+  ```bash
+  goose beta drivers
+  # Available drivers:
+  #   pgx/v5
+  ```
+</Tip>

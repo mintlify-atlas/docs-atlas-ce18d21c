@@ -1,0 +1,65 @@
+---
+title: "Introduction"
+description: "Goose is a database migration tool for Go. Manage your schema with incremental SQL changes or Go functions across all major databases."
+---
+
+Goose is a database migration tool. Use it as a **CLI** for interactive migration management from the terminal, or embed it as a **Go library** in your application for programmatic control.
+
+You manage your database schema by creating incremental migration files — either as SQL or Go functions — and goose runs them forward or backward as your application evolves.
+
+## Key features
+
+- **SQL migrations** — Write plain SQL files with `-- +goose Up` and `-- +goose Down` annotations
+- **Go migrations** — Define migrations as Go functions for complex, programmatic schema changes
+- **Multi-database support** — Works with Postgres, MySQL, SQLite, ClickHouse, MSSQL, and more
+- **Embedded migrations** — Bundle migration files directly into your Go binary using `embed.FS`
+- **Out-of-order migrations** — Apply missing migrations from teammates without breaking your history
+- **Environment variable substitution** — Interpolate env vars directly inside SQL migration files
+- **Advisory locking** — Prevents multiple processes from running migrations simultaneously
+- **Hybrid versioning** — Combine timestamp-based (development) and sequential (production) numbering
+- **Provider API** — A structured Go library API for programmatic migration management with typed results, locking, and configurable logging
+- **Structured logging** — Configurable `slog`-compatible logging for observability in library mode
+
+## Supported databases
+
+| Database | Driver |
+|---|---|
+| PostgreSQL | `postgres` |
+| MySQL / MariaDB | `mysql` |
+| SQLite | `sqlite3` |
+| ClickHouse | `clickhouse` |
+| Microsoft SQL Server | `mssql` |
+| Google Spanner | `spanner` |
+| YDB | `ydb` |
+| TiDB | `tidb` |
+| Turso (libSQL) | `turso` |
+| Amazon Redshift | `redshift` |
+| StarRocks | `starrocks` |
+| AWS Aurora DSQL | `dsql` |
+
+## CLI vs library
+
+Goose works in two modes depending on your use case.
+
+**CLI** — Install the `goose` binary and run migration commands directly from your terminal or CI pipeline. No application code changes are required. This is the fastest way to get started.
+
+**Go library** — Import `github.com/pressly/goose/v3` into your Go application and run migrations programmatically at startup. The Provider API gives you full control over migration lifecycle, logging, and locking behavior.
+
+Both modes share the same migration file format and versioning system, so you can switch between them at any point.
+
+## Explore goose
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install the goose CLI via Go, Homebrew, or a pre-built binary.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Run your first migration with SQLite in under five minutes.
+  </Card>
+  <Card title="SQL migrations" icon="database" href="/migrations/sql-migrations">
+    Write incremental SQL changes with up and down support.
+  </Card>
+  <Card title="Go library" icon="code" href="/library/quickstart">
+    Embed goose in your Go application using the Provider API.
+  </Card>
+</CardGroup>

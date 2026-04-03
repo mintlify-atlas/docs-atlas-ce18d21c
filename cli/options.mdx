@@ -1,0 +1,195 @@
+---
+title: "Options"
+description: "Reference for every goose CLI flag, including default values and environment variable equivalents."
+---
+
+Options (flags) are placed between the binary name and the command. You can mix flags with positional arguments in any order:
+
+```bash
+goose [OPTIONS] DRIVER DBSTRING COMMAND
+```
+
+For example:
+
+```bash
+goose -dir ./migrations -v sqlite3 ./myapp.db up
+```
+
+---
+
+## Directory and table
+
+<ParamField path="-dir" type="string" default=".">
+  Path to the directory containing migration files.
+
+  ```bash
+  goose -dir ./migrations sqlite3 ./myapp.db up
+  ```
+
+  Environment variable equivalent: `GOOSE_MIGRATION_DIR`
+</ParamField>
+
+<ParamField path="-table" type="string" default="goose_db_version">
+  Name of the table goose uses to track applied migrations.
+
+  ```bash
+  goose -table custom_migrations sqlite3 ./myapp.db up
+  ```
+
+  If you use a non-public schema in PostgreSQL, include the schema name:
+
+  ```bash
+  goose -table myschema.goose_db_version postgres "..." up
+  ```
+
+  Environment variable equivalent: `GOOSE_TABLE`
+</ParamField>
+
+---
+
+## Output and display
+
+<ParamField path="-v" type="boolean" default="false">
+  Enable verbose output. Goose prints additional detail about each migration as it runs, and `validate` shows a per-file breakdown.
+
+  ```bash
+  goose -v sqlite3 ./myapp.db up
+  ```
+</ParamField>
+
+<ParamField path="-no-color" type="boolean" default="false">
+  Disable colored terminal output. Goose also disables color automatically when the `NO_COLOR` environment variable is set to a truthy value.
+
+  ```bash
+  goose -no-color sqlite3 ./myapp.db status
+  ```
+
+  Environment variable equivalent: `NO_COLOR`
+</ParamField>
+
+<ParamField path="-h" type="boolean" default="false">
+  Print usage information and exit.
+
+  ```bash
+  goose -h
+  ```
+</ParamField>
+
+<ParamField path="-version" type="boolean" default="false">
+  Print the installed goose version and exit.
+
+  ```bash
+  goose -version
+  ```
+
+  ```
+  goose version: v3.24.1
+  ```
+</ParamField>
+
+---
+
+## Migration behavior
+
+<ParamField path="-s" type="boolean" default="false">
+  Use sequential numbering (`00001_`, `00002_`, …) when creating new migration files with `create`, instead of the default timestamp prefix.
+
+  ```bash
+  goose -s sqlite3 ./myapp.db create add_users_table sql
+  # Created new file: 00001_add_users_table.sql
+  ```
+</ParamField>
+
+<ParamField path="-allow-missing" type="boolean" default="false">
+  Apply out-of-order (missing) migrations. By default, goose raises an error if it detects migrations that are older than the current database version but have not been applied. This flag suppresses that error and applies the missing migrations.
+
+  ```bash
+  goose -allow-missing sqlite3 ./myapp.db up
+  ```
+
+  <Note>
+    This flag is most useful in team environments where developers create migrations concurrently. Consider the [hybrid versioning](/advanced/hybrid-versioning) approach — using timestamps in development and `fix` before production — as an alternative.
+  </Note>
+</ParamField>
+
+<ParamField path="-no-versioning" type="boolean" default="false">
+  Apply migrations without tracking them in the version table. Migrations are run in file order from the specified directory without recording them in `goose_db_version`. Subsequent runs will re-apply them.
+
+  ```bash
+  goose -no-versioning sqlite3 ./myapp.db up
+  ```
+
+  <Warning>
+    With `-no-versioning`, goose has no memory of what has been applied. Only use this when you explicitly need untracked, repeatable execution.
+  </Warning>
+</ParamField>
+
+<ParamField path="-timeout" type="duration" default="0 (no timeout)">
+  Maximum allowed duration for any individual query. Accepts Go duration strings such as `30s`, `5m`, or `1h13m`. When the timeout is reached, the context is cancelled and the migration fails.
+
+  ```bash
+  goose -timeout 30s sqlite3 ./myapp.db up
+  ```
+</ParamField>
+
+---
+
+## Environment file
+
+<ParamField path="-env" type="string" default=".env">
+  Path to a file from which goose loads environment variables before running. By default, goose attempts to load `.env` in the current working directory (failure is silently ignored).
+
+  Load a specific file:
+
+  ```bash
+  goose -env /path/to/.env.production up
+  ```
+
+  Disable env file loading entirely:
+
+  ```bash
+  goose -env=none up
+  ```
+</ParamField>
+
+---
+
+## MySQL TLS / SSL
+
+The following flags apply only to MySQL connections.
+
+<ParamField path="-certfile" type="string">
+  Path to a PEM-encoded file containing root CA certificates. Used to verify the server's certificate when connecting to MySQL over TLS.
+
+  ```bash
+  goose -certfile /etc/ssl/certs/ca-certificates.crt mysql "user:pass@tcp(host:3306)/db?tls=custom" up
+  ```
+</ParamField>
+
+<ParamField path="-ssl-cert" type="string">
+  Path to a PEM-encoded SSL client certificate file (MySQL only).
+
+  ```bash
+  goose -ssl-cert /path/to/client-cert.pem mysql "..." up
+  ```
+</ParamField>
+
+<ParamField path="-ssl-key" type="string">
+  Path to the SSL client private key file (MySQL only).
+
+  ```bash
+  goose -ssl-key /path/to/client-key.pem mysql "..." up
+  ```
+</ParamField>
+
+---
+
+## Flag precedence
+
+When the same configuration is provided in multiple places, goose resolves it in this order, from highest to lowest priority:
+
+| Priority | Source |
+|----------|--------|
+| 1 (highest) | CLI flag (e.g. `-dir ./migrations`) |
+| 2 | Environment variable (e.g. `GOOSE_MIGRATION_DIR`) |
+| 3 (lowest) | Default value |

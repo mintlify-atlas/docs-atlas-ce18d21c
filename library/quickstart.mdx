@@ -1,0 +1,152 @@
+---
+title: "Go library quickstart"
+description: "Embed goose in your Go application using the Provider API to run migrations programmatically."
+---
+
+The goose Go library lets you run migrations directly from your application — no separate CLI process required. The `Provider` type is the central API: you create one, call `Up`, and check the results.
+
+<Note>
+  For new projects, use the `Provider` API rather than the legacy global functions (`goose.Up`, `goose.Down`, etc.). The Provider is safe for concurrent use, supports structured logging, distributed locking, and gives you typed results instead of printing to stdout.
+</Note>
+
+## Add the dependency
+
+```bash
+go get github.com/pressly/goose/v3
+```
+
+## Complete example
+
+The steps below show the minimal code needed to open a database, create a Provider, and apply all pending migrations.
+
+<Steps>
+  <Step title="Import the package">
+    Import `goose` and a database driver. The example below uses PostgreSQL, but any [supported dialect](/library/provider-api#dialects) works the same way.
+
+    ```go
+    import (
+        "context"
+        "database/sql"
+        "fmt"
+        "log"
+        "os"
+
+        "github.com/pressly/goose/v3"
+        _ "github.com/jackc/pgx/v5/stdlib" // postgres driver
+    )
+    ```
+  </Step>
+
+  <Step title="Open a database connection">
+    ```go
+    db, err := sql.Open("pgx", os.Getenv("DATABASE_URL"))
+    if err != nil {
+        log.Fatalf("open db: %v", err)
+    }
+    defer db.Close()
+    ```
+  </Step>
+
+  <Step title="Create a Provider">
+    Pass the dialect, the `*sql.DB`, and the filesystem that contains your migration files. Use `os.DirFS` to read from the local filesystem, or an `embed.FS` to bundle migrations into your binary.
+
+    ```go
+    provider, err := goose.NewProvider(
+        goose.DialectPostgres,
+        db,
+        os.DirFS("migrations"),
+    )
+    if err != nil {
+        log.Fatalf("create provider: %v", err)
+    }
+    ```
+
+    `NewProvider` returns `ErrNoMigrations` if the directory contains no migration files.
+  </Step>
+
+  <Step title="Apply all pending migrations">
+    ```go
+    ctx := context.Background()
+
+    results, err := provider.Up(ctx)
+    if err != nil {
+        log.Fatalf("run migrations: %v", err)
+    }
+
+    for _, r := range results {
+        fmt.Println(r) // e.g. "OK    up 00001_create_users.sql (4.21ms)"
+    }
+    fmt.Printf("applied %d migration(s)\n", len(results))
+    ```
+
+    `Up` returns an empty slice (and `nil` error) when there are no pending migrations — it is safe to call on every application startup.
+  </Step>
+</Steps>
+
+## Handle partial failures
+
+If a migration fails after some have already been applied, `Up` returns a `*PartialError`:
+
+```go
+results, err := provider.Up(ctx)
+if err != nil {
+    var partial *goose.PartialError
+    if errors.As(err, &partial) {
+        fmt.Printf("applied %d migration(s) before failure\n", len(partial.Applied))
+        fmt.Printf("failed migration: version %d — %v\n",
+            partial.Failed.Source.Version, partial.Err)
+    }
+    log.Fatal(err)
+}
+```
+
+## Use embedded migrations
+
+Embed your migration files into the binary so you can ship a single self-contained executable:
+
+```go
+import "embed"
+
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
+
+sub, err := fs.Sub(migrationsFS, "migrations")
+if err != nil {
+    log.Fatal(err)
+}
+
+provider, err := goose.NewProvider(goose.DialectPostgres, db, sub)
+```
+
+## Legacy global API
+
+The package-level functions (`goose.Up`, `goose.Down`, `goose.Status`, etc.) are the older API. They operate on a global registry and write output directly to stdout.
+
+```go
+// Legacy API — still works but not recommended for new code.
+if err := goose.Up(db, "migrations"); err != nil {
+    log.Fatal(err)
+}
+```
+
+The table below summarises the key differences:
+
+| | Provider API | Legacy global API |
+|---|---|---|
+| Concurrency | Safe | Not safe |
+| Results | Typed `[]*MigrationResult` | Printed to stdout |
+| Logging | Configurable (`WithLogger`, `WithSlog`) | Global `verbose` flag |
+| Locking | Built-in (`WithSessionLocker`, `WithLocker`) | Not available |
+| Versioning control | `WithDisableVersioning` | `-no-versioning` flag |
+| Go migrations | `WithGoMigrations` or global registry | Global registry only |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Provider API" icon="book" href="/library/provider-api">
+    Full reference for every Provider method and option.
+  </Card>
+  <Card title="Distributed locking" icon="lock" href="/library/locking">
+    Prevent concurrent migration runs with session or table locks.
+  </Card>
+</CardGroup>

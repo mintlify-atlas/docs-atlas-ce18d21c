@@ -1,0 +1,166 @@
+---
+title: "Environment Variables"
+description: "Configure goose with environment variables or a .env file to avoid repeating the driver and connection string on every command."
+---
+
+Goose supports environment variables as an alternative to passing the driver and connection string as positional arguments. You can export them in your shell, set them inline before a command, or place them in a `.env` file.
+
+<Note>
+  CLI flags always take precedence over environment variables, which in turn take precedence over default values. See [Options](/cli/options) for the full precedence table.
+</Note>
+
+---
+
+## Supported variables
+
+<ParamField path="GOOSE_DRIVER" type="string">
+  The database driver to use. When set, you can omit the `DRIVER` positional argument from every goose command.
+
+  Supported values: `postgres`, `mysql`, `sqlite3`, `spanner`, `mssql`, `redshift`, `tidb`, `clickhouse`, `ydb`, `starrocks`, `turso`, `dsql`
+
+  ```bash
+  export GOOSE_DRIVER=postgres
+  ```
+</ParamField>
+
+<ParamField path="GOOSE_DBSTRING" type="string">
+  The database connection string. When set together with `GOOSE_DRIVER`, you can omit both positional arguments:
+
+  ```bash
+  export GOOSE_DBSTRING="user=postgres dbname=myapp sslmode=disable"
+  ```
+
+  Then run commands without specifying driver or connection string:
+
+  ```bash
+  goose up
+  goose status
+  ```
+</ParamField>
+
+<ParamField path="GOOSE_MIGRATION_DIR" type="string" default=".">
+  Path to the directory containing migration files. Equivalent to the `-dir` CLI flag.
+
+  ```bash
+  export GOOSE_MIGRATION_DIR=./migrations
+  ```
+</ParamField>
+
+<ParamField path="GOOSE_TABLE" type="string" default="goose_db_version">
+  Name of the table goose uses to track applied migrations. Equivalent to the `-table` CLI flag.
+
+  ```bash
+  export GOOSE_TABLE=schema_migrations
+  ```
+
+  For PostgreSQL with a non-public schema:
+
+  ```bash
+  export GOOSE_TABLE=myschema.goose_db_version
+  ```
+</ParamField>
+
+<ParamField path="NO_COLOR" type="string">
+  Disable colored terminal output when set to any truthy value (`1`, `true`, `yes`). Goose follows the [no-color.org](https://no-color.org/) convention.
+
+  ```bash
+  export NO_COLOR=1
+  ```
+
+  You can also use the `-no-color` CLI flag instead.
+</ParamField>
+
+---
+
+## Using a `.env` file
+
+Goose automatically loads a `.env` file from the current working directory before running any command. If no `.env` file is found, the error is silently ignored — nothing breaks.
+
+**Example `.env` file:**
+
+```env
+GOOSE_DRIVER=postgres
+GOOSE_DBSTRING=postgres://admin:admin@localhost:5432/admin_db
+GOOSE_MIGRATION_DIR=./migrations
+GOOSE_TABLE=custom.goose_migrations
+```
+
+With this file in place, you can run any goose command without specifying the driver or connection string:
+
+```bash
+goose up
+goose status
+goose create add_users_table sql
+```
+
+### Loading a custom env file
+
+Use the `-env` flag to load variables from a file at a specific path:
+
+```bash
+goose -env=/path/to/.env.production up
+```
+
+### Disabling env file loading
+
+Set `-env=none` to prevent goose from loading any `.env` file:
+
+```bash
+goose -env=none sqlite3 ./myapp.db up
+```
+
+This is useful in CI or container environments where variables are injected directly and you want to ensure no local `.env` file interferes.
+
+---
+
+## Inline environment variables
+
+You can set environment variables inline for a single command without exporting them to your shell:
+
+<Tabs>
+  <Tab title="SQLite">
+    ```bash
+    GOOSE_DRIVER=sqlite3 GOOSE_DBSTRING=./myapp.db goose status
+    ```
+  </Tab>
+  <Tab title="PostgreSQL">
+    ```bash
+    GOOSE_DRIVER=postgres GOOSE_DBSTRING="user=postgres dbname=myapp sslmode=disable" goose status
+    ```
+  </Tab>
+  <Tab title="MySQL">
+    ```bash
+    GOOSE_DRIVER=mysql GOOSE_DBSTRING="user:password@/dbname?parseTime=true" goose status
+    ```
+  </Tab>
+  <Tab title="ClickHouse">
+    ```bash
+    GOOSE_DRIVER=clickhouse GOOSE_DBSTRING="clickhouse://user:password@host:9440/dbname?secure=true&skip_verify=false" goose status
+    ```
+  </Tab>
+  <Tab title="Turso">
+    ```bash
+    GOOSE_DRIVER=turso GOOSE_DBSTRING="libsql://dbname.turso.io?authToken=token" goose status
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Verifying your configuration
+
+Run the `env` command to see exactly which values goose is reading, including variables loaded from a `.env` file:
+
+```bash
+goose env
+```
+
+```
+GOOSE_DRIVER="postgres"
+GOOSE_DBSTRING="user=postgres dbname=myapp sslmode=disable"
+GOOSE_MIGRATION_DIR="./migrations"
+GOOSE_TABLE=""
+NO_COLOR="false"
+```
+
+This is helpful for debugging when goose is connecting to an unexpected database or looking in the wrong directory.

@@ -1,0 +1,103 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "Goose",
+  "projectDescription": "A database migration tool for Go that supports SQL and Go function migrations across Postgres, MySQL, SQLite, ClickHouse, and more — usable as both a CLI and a library.",
+  "theme": "palm",
+  "primaryColor": "#3B82F6",
+  "lightColor": null,
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Migrations",
+            "pages": [
+              "migrations/sql-migrations",
+              "migrations/go-migrations",
+              "migrations/embedded-migrations"
+            ]
+          },
+          {
+            "group": "CLI Reference",
+            "pages": [
+              "cli/commands",
+              "cli/options",
+              "cli/environment-variables"
+            ]
+          },
+          {
+            "group": "Go Library",
+            "pages": [
+              "library/quickstart",
+              "library/provider-api",
+              "library/locking"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/hybrid-versioning",
+              "advanced/custom-store",
+              "advanced/build-tags"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "SQL and Go function migrations with up/down support",
+    "Supports Postgres, MySQL, SQLite, ClickHouse, MSSQL, Spanner, YDB, TiDB, Turso, and more",
+    "Embedded migrations via Go embed.FS",
+    "Out-of-order (missing) migration support",
+    "Environment variable substitution in SQL migrations",
+    "Advisory locking (session and table-based) to prevent concurrent runs",
+    "Custom store interface for bring-your-own dialect support",
+    "Hybrid versioning with timestamp + sequential numbering",
+    "Provider API for programmatic migration management",
+    "Structured logging with slog support"
+  ],
+  "publicApiSurface": [
+    "goose.NewProvider(dialect, db, fsys, opts...) (*Provider, error)",
+    "Provider.Up(ctx) ([]*MigrationResult, error)",
+    "Provider.UpByOne(ctx) (*MigrationResult, error)",
+    "Provider.UpTo(ctx, version) ([]*MigrationResult, error)",
+    "Provider.Down(ctx) (*MigrationResult, error)",
+    "Provider.DownTo(ctx, version) ([]*MigrationResult, error)",
+    "Provider.ApplyVersion(ctx, version, direction) (*MigrationResult, error)",
+    "Provider.Status(ctx) ([]*MigrationStatus, error)",
+    "Provider.HasPending(ctx) (bool, error)",
+    "Provider.GetVersions(ctx) (current, target int64, error)",
+    "Provider.ListSources() []*Source",
+    "goose.AddMigrationContext(up, down GoMigrationContext)",
+    "goose.AddMigrationNoTxContext(up, down GoMigrationNoTxContext)",
+    "goose.NewGoMigration(version, up, down *GoFunc) *Migration",
+    "goose.SetGlobalMigrations(migrations ...*Migration) error",
+    "goose.RunContext(ctx, command, db, dir, args...) error",
+    "goose.RunWithOptionsContext(ctx, command, db, dir, args, opts...) error",
+    "goose.SetBaseFS(fsys fs.FS)",
+    "goose.Up(db, dir) error",
+    "goose.Down(db, dir) error",
+    "goose.Status(db, dir) error",
+    "WithStore(store database.Store) ProviderOption",
+    "WithTableName(name string) ProviderOption",
+    "WithSessionLocker(locker lock.SessionLocker) ProviderOption",
+    "WithLocker(locker lock.Locker) ProviderOption",
+    "WithAllowOutofOrder(b bool) ProviderOption",
+    "WithDisableVersioning(b bool) ProviderOption",
+    "WithGoMigrations(migrations ...*Migration) ProviderOption",
+    "WithSlog(logger *slog.Logger) ProviderOption",
+    "database.NewStore(dialect, tableName) (Store, error)",
+    "lock.NewPostgresSessionLocker() SessionLocker"
+  ]
+}

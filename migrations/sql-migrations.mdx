@@ -1,0 +1,145 @@
+---
+title: "SQL migrations"
+description: "Write database schema changes as plain SQL files with goose annotations."
+---
+
+SQL migrations are the most common way to use goose. You write plain `.sql` files annotated with special comments that tell goose which statements to run on `up` and which to run on `down`.
+
+## File naming
+
+Migration files must begin with a numeric version component followed by an underscore and a descriptive name:
+
+```
+20170506082420_create_users_table.sql   # timestamp-based (default)
+00001_create_users_table.sql            # sequential (use -s flag with create)
+```
+
+Use the `create` command to generate a new file with the correct name:
+
+```bash
+goose create create_users_table sql
+# Created new file: 20170506082420_create_users_table.sql
+
+goose -s create create_users_table sql
+# Created new file: 00001_create_users_table.sql
+```
+
+## Annotations
+
+Every SQL migration file must contain at least one `-- +goose Up` annotation. Statements that follow it run when you migrate forward. The `-- +goose Down` annotation is optional but recommended — statements that follow it run when you roll back.
+
+The `-- +goose Up` annotation must appear before `-- +goose Down` if both are present.
+
+```sql
+-- +goose Up
+CREATE TABLE users (
+    id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT,
+    name TEXT,
+    surname TEXT
+);
+
+INSERT INTO users VALUES
+(0, 'root', '', ''),
+(1, 'vojtechvitek', 'Vojtech', 'Vitek');
+
+-- +goose Down
+DROP TABLE users;
+```
+
+<Tip>
+Always include a `-- +goose Down` section. It lets you roll back migrations cleanly during development and in production incidents.
+</Tip>
+
+## Transactions
+
+By default, goose runs all statements in a migration inside a single transaction. If the migration fails, the transaction is rolled back and the database is left unchanged.
+
+Some statements cannot run inside a transaction — for example, `CREATE DATABASE`, `CREATE INDEX CONCURRENTLY` in PostgreSQL, or certain DDL statements in MySQL. Add `-- +goose NO TRANSACTION` at the top of the file to opt out of transactions for the entire migration. Both the `Up` and `Down` sections within that file will run without a transaction.
+
+```sql
+-- +goose NO TRANSACTION
+
+-- +goose Up
+CREATE DATABASE myapp;
+
+-- +goose Down
+DROP DATABASE myapp;
+```
+
+## Statement delimiters
+
+Goose splits statements by semicolons. Every statement must end with a semicolon to be recognized.
+
+For complex multi-statement blocks — such as PL/pgSQL functions that contain semicolons inside the function body — wrap the block with `-- +goose StatementBegin` and `-- +goose StatementEnd` so goose treats the entire block as a single statement:
+
+```sql
+-- +goose Up
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION histories_partition_creation( DATE, DATE )
+returns void AS $$
+DECLARE
+  create_query text;
+BEGIN
+  FOR create_query IN SELECT
+      'CREATE TABLE IF NOT EXISTS histories_'
+      || TO_CHAR( d, 'YYYY_MM' )
+      || ' ( CHECK( created_at >= timestamp '''
+      || TO_CHAR( d, 'YYYY-MM-DD 00:00:00' )
+      || ''' AND created_at < timestamp '''
+      || TO_CHAR( d + INTERVAL '1 month', 'YYYY-MM-DD 00:00:00' )
+      || ''' ) ) inherits ( histories );'
+    FROM generate_series( $1, $2, '1 month' ) AS d
+  LOOP
+    EXECUTE create_query;
+  END LOOP;  -- LOOP END
+END;         -- FUNCTION END
+$$
+language plpgsql;
+-- +goose StatementEnd
+```
+
+## Environment variable substitution
+
+Goose can expand environment variables inside SQL statements. This is disabled by default for backwards compatibility. Enable it with `-- +goose ENVSUB ON` and disable it again with `-- +goose ENVSUB OFF`. You can toggle substitution multiple times within a single file.
+
+```sql
+-- +goose Up
+-- +goose ENVSUB ON
+CREATE SCHEMA ${APP_SCHEMA};
+-- +goose ENVSUB OFF
+
+-- +goose Down
+-- +goose ENVSUB ON
+DROP SCHEMA ${APP_SCHEMA};
+-- +goose ENVSUB OFF
+```
+
+### Supported expansion formats
+
+| Syntax | Behavior |
+|---|---|
+| `${VAR}` or `$VAR` | Expands to the value of `VAR` |
+| `${VAR:-default}` | Expands to the value of `VAR`, or `default` if `VAR` is unset or empty |
+| `${VAR-default}` | Expands to the value of `VAR`, or `default` if `VAR` is unset |
+| `${VAR?err_msg}` | Expands to the value of `VAR`, or prints `err_msg` and returns an error if `VAR` is unset |
+
+<Note>
+`${VAR:?err_msg}` (colon-question-mark) is **not** supported.
+</Note>
+
+For PL/pgSQL functions where you want substitution only inside the function body and not around the `$$` delimiters, scope the annotations tightly:
+
+```sql
+-- +goose Up
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION test_func()
+RETURNS void AS $$
+-- +goose ENVSUB ON
+BEGIN
+    RAISE NOTICE '${SOME_ENV_VAR}';
+END;
+-- +goose ENVSUB OFF
+$$ LANGUAGE plpgsql;
+-- +goose StatementEnd
+```

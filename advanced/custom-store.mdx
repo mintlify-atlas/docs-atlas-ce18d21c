@@ -1,0 +1,248 @@
+---
+title: "Custom Store"
+description: "Implement a custom Store to support unsupported databases, custom table schemas, or custom SQL dialects."
+---
+
+The `database.Store` interface is the layer goose uses to read and write migration history. By default, goose ships with built-in store implementations for every supported dialect. You need a custom store when:
+
+- You are targeting a database that goose does not officially support.
+- You want to change the schema of the version table (e.g. add extra columns).
+- You need database-specific SQL that differs from what goose generates.
+
+## The `Store` interface
+
+Your custom store must implement all seven methods of `database.Store`:
+
+```go
+type Store interface {
+    // Tablename returns the name of the version table. Must not be empty.
+    Tablename() string
+
+    // CreateVersionTable creates the version table used to track migrations.
+    CreateVersionTable(ctx context.Context, db DBTxConn) error
+
+    // Insert records a successfully applied migration version.
+    Insert(ctx context.Context, db DBTxConn, req InsertRequest) error
+
+    // Delete removes a migration version record (used during rollbacks).
+    Delete(ctx context.Context, db DBTxConn, version int64) error
+
+    // GetMigration retrieves a single migration by version.
+    // Must return ErrVersionNotFound when the version does not exist.
+    GetMigration(ctx context.Context, db DBTxConn, version int64) (*GetMigrationResult, error)
+
+    // GetLatestVersion returns the most recently applied version.
+    // Must return ErrVersionNotFound when no migrations have been applied.
+    GetLatestVersion(ctx context.Context, db DBTxConn) (int64, error)
+
+    // ListMigrations returns all migrations sorted descending by id or timestamp.
+    // Returns an empty slice (not an error) when no migrations exist.
+    ListMigrations(ctx context.Context, db DBTxConn) ([]*ListMigrationsResult, error)
+}
+```
+
+### Supporting types
+
+These types are used by `Insert`, `GetMigration`, and `ListMigrations`:
+
+```go
+type InsertRequest struct {
+    Version int64
+}
+
+type GetMigrationResult struct {
+    Timestamp time.Time
+    IsApplied bool
+}
+
+type ListMigrationsResult struct {
+    Version   int64
+    IsApplied bool
+}
+```
+
+The sentinel error `database.ErrVersionNotFound` must be returned (not wrapped anonymously) by `GetMigration` and `GetLatestVersion` when a version does not exist. Goose checks for this error explicitly.
+
+## Option 1: Implement `Store` directly
+
+Write a struct that satisfies the full `Store` interface. This gives you complete control over every SQL statement.
+
+```go
+package main
+
+import (
+    "context"
+    "database/sql"
+    "errors"
+    "fmt"
+
+    "github.com/pressly/goose/v3/database"
+)
+
+type myCustomStore struct {
+    tableName string
+}
+
+func (s *myCustomStore) Tablename() string { return s.tableName }
+
+func (s *myCustomStore) CreateVersionTable(ctx context.Context, db database.DBTxConn) error {
+    q := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+        id          BIGSERIAL PRIMARY KEY,
+        version_id  BIGINT    NOT NULL,
+        is_applied  BOOLEAN   NOT NULL,
+        tstamp      TIMESTAMP DEFAULT now()
+    )`, s.tableName)
+    _, err := db.ExecContext(ctx, q)
+    return err
+}
+
+func (s *myCustomStore) Insert(ctx context.Context, db database.DBTxConn, req database.InsertRequest) error {
+    q := fmt.Sprintf(`INSERT INTO %s (version_id, is_applied) VALUES ($1, $2)`, s.tableName)
+    _, err := db.ExecContext(ctx, q, req.Version, true)
+    return err
+}
+
+func (s *myCustomStore) Delete(ctx context.Context, db database.DBTxConn, version int64) error {
+    q := fmt.Sprintf(`DELETE FROM %s WHERE version_id = $1`, s.tableName)
+    _, err := db.ExecContext(ctx, q, version)
+    return err
+}
+
+func (s *myCustomStore) GetMigration(
+    ctx context.Context,
+    db database.DBTxConn,
+    version int64,
+) (*database.GetMigrationResult, error) {
+    q := fmt.Sprintf(`SELECT tstamp, is_applied FROM %s WHERE version_id = $1 ORDER BY id DESC LIMIT 1`, s.tableName)
+    var result database.GetMigrationResult
+    err := db.QueryRowContext(ctx, q, version).Scan(&result.Timestamp, &result.IsApplied)
+    if errors.Is(err, sql.ErrNoRows) {
+        return nil, fmt.Errorf("%w: %d", database.ErrVersionNotFound, version)
+    }
+    return &result, err
+}
+
+func (s *myCustomStore) GetLatestVersion(ctx context.Context, db database.DBTxConn) (int64, error) {
+    q := fmt.Sprintf(`SELECT MAX(version_id) FROM %s WHERE is_applied = TRUE`, s.tableName)
+    var version sql.NullInt64
+    if err := db.QueryRowContext(ctx, q).Scan(&version); err != nil {
+        return -1, err
+    }
+    if !version.Valid {
+        return -1, fmt.Errorf("latest %w", database.ErrVersionNotFound)
+    }
+    return version.Int64, nil
+}
+
+func (s *myCustomStore) ListMigrations(
+    ctx context.Context,
+    db database.DBTxConn,
+) ([]*database.ListMigrationsResult, error) {
+    q := fmt.Sprintf(`SELECT version_id, is_applied FROM %s ORDER BY id DESC`, s.tableName)
+    rows, err := db.QueryContext(ctx, q)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+    var results []*database.ListMigrationsResult
+    for rows.Next() {
+        var r database.ListMigrationsResult
+        if err := rows.Scan(&r.Version, &r.IsApplied); err != nil {
+            return nil, err
+        }
+        results = append(results, &r)
+    }
+    return results, rows.Err()
+}
+```
+
+## Option 2: Implement `dialect.Querier` and use `NewStoreFromQuerier`
+
+If your database syntax is mostly standard SQL and you only need to customise the query strings, implement `dialect.Querier` and pass it to `database.NewStoreFromQuerier`. This lets goose handle all the scanning and error-wrapping logic for you.
+
+```go
+package main
+
+import "fmt"
+
+// myQuerier provides dialect-specific SQL strings for goose.
+type myQuerier struct{}
+
+func (q *myQuerier) CreateTable(tableName string) string {
+    return fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        version_id INTEGER NOT NULL,
+        is_applied INTEGER NOT NULL,
+        tstamp     DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`, tableName)
+}
+
+func (q *myQuerier) InsertVersion(tableName string) string {
+    return fmt.Sprintf(`INSERT INTO %s (version_id, is_applied) VALUES (?, ?)`, tableName)
+}
+
+func (q *myQuerier) DeleteVersion(tableName string) string {
+    return fmt.Sprintf(`DELETE FROM %s WHERE version_id = ?`, tableName)
+}
+
+func (q *myQuerier) GetMigrationByVersion(tableName string) string {
+    // Must return: tstamp, is_applied
+    return fmt.Sprintf(`SELECT tstamp, is_applied FROM %s WHERE version_id = ? ORDER BY id DESC LIMIT 1`, tableName)
+}
+
+func (q *myQuerier) ListMigrations(tableName string) string {
+    // Must return: version_id, is_applied
+    return fmt.Sprintf(`SELECT version_id, is_applied FROM %s ORDER BY id DESC`, tableName)
+}
+
+func (q *myQuerier) GetLatestVersion(tableName string) string {
+    // Must return a nullable int64
+    return fmt.Sprintf(`SELECT MAX(version_id) FROM %s WHERE is_applied = 1`, tableName)
+}
+```
+
+Then build a `Store` from your querier:
+
+```go
+store, err := database.NewStoreFromQuerier("goose_db_version", &myQuerier{})
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+## Wiring the custom store into the Provider
+
+Pass the store to `goose.NewProvider` using `goose.WithStore`. You must also set the dialect to `goose.DialectCustom`:
+
+```go
+provider, err := goose.NewProvider(
+    goose.DialectCustom,  // required when supplying a custom store
+    db,
+    os.DirFS("migrations"),
+    goose.WithStore(store),
+)
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+<Note>
+  `WithTableName` cannot be used together with `WithStore`. The table name is part of your store implementation — set it there (e.g. in your `Tablename()` method or constructor). Passing both options returns an error.
+</Note>
+
+## Optional: `TableExists` optimisation
+
+If your database supports an efficient way to check whether the version table exists (e.g. querying a system catalog), you can implement the optional `TableExists` method on your `dialect.Querier`. Goose calls this before attempting to create the version table, which avoids a round-trip `CREATE TABLE IF NOT EXISTS` on every run.
+
+```go
+// TableExists returns a SQL query that returns a single boolean row.
+// Return an empty string if not supported.
+func (q *myQuerier) TableExists(tableName string) string {
+    return fmt.Sprintf(
+        `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = '%s')`,
+        tableName,
+    )
+}
+```
+
+This satisfies the `dialect.QuerierExtender` interface. Goose detects the method at runtime via a type assertion, so you do not need to change the `NewStoreFromQuerier` call.

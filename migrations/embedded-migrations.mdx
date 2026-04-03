@@ -1,0 +1,108 @@
+---
+title: "Embedded migrations"
+description: "Compile SQL migration files directly into your Go binary using embed.FS."
+---
+
+Go 1.16 introduced the [`embed`](https://pkg.go.dev/embed) package, which lets you compile files into your binary at build time. You can use this with goose to ship a self-contained binary that carries its own migrations — no separate migration directory required at runtime.
+
+## How it works
+
+You declare an `embed.FS` variable annotated with a `//go:embed` directive, then pass it to goose via `goose.SetBaseFS`. After that, all standard goose API calls (`Up`, `Down`, `Status`, etc.) read migration files from the embedded filesystem instead of the OS filesystem.
+
+<Note>
+The directory path you pass to goose commands (for example `"migrations"`) must match the embedded directory structure. The embed directive preserves the directory hierarchy, so `//go:embed migrations/*.sql` embeds files under a `migrations/` prefix that you must include in the path argument.
+</Note>
+
+## Complete example
+
+```go
+package main
+
+import (
+    "database/sql"
+    "embed"
+
+    "github.com/pressly/goose/v3"
+)
+
+//go:embed migrations/*.sql
+var embedMigrations embed.FS
+
+func main() {
+    var db *sql.DB
+    // setup database
+
+    goose.SetBaseFS(embedMigrations)
+
+    if err := goose.SetDialect("postgres"); err != nil {
+        panic(err)
+    }
+
+    if err := goose.Up(db, "migrations"); err != nil {
+        panic(err)
+    }
+
+    // run app
+}
+```
+
+The `//go:embed migrations/*.sql` directive embeds all `.sql` files from the `migrations/` directory. The `"migrations"` string passed to `goose.Up` tells goose where to look inside the embedded filesystem.
+
+## Read-only limitation
+
+Embedding is read-only. The `fix` and `create` commands always operate on the OS filesystem regardless of whether you have configured an embedded FS. This is expected — `io/fs` interfaces only support read access.
+
+<Warning>
+Do not rely on `goose create` or `goose fix` to write files into an embedded filesystem. Run those commands against the OS filesystem during development, then rebuild your binary to embed the updated files.
+</Warning>
+
+## Provider API
+
+When using the [Provider API](/library/provider-api), pass your `embed.FS` directly to `goose.NewProvider`:
+
+```go
+import (
+    "embed"
+    "io/fs"
+
+    "github.com/pressly/goose/v3"
+)
+
+//go:embed migrations/*.sql
+var embedMigrations embed.FS
+
+// Use fs.Sub to create a sub-filesystem rooted at the migrations directory.
+// This lets you pass "." as the directory to NewProvider instead of "migrations".
+sub, err := fs.Sub(embedMigrations, "migrations")
+if err != nil {
+    panic(err)
+}
+
+provider, err := goose.NewProvider(goose.DialectPostgres, db, sub)
+if err != nil {
+    panic(err)
+}
+```
+
+Using `fs.Sub` strips the `migrations/` prefix from the embedded paths, so you can pass `"."` (or an `fs.FS` directly) as the directory argument rather than repeating the subdirectory name.
+
+## Filtering embedded migrations
+
+If your embed.FS contains files you want to exclude, use `fs.Sub` to create a narrower view:
+
+```go
+//go:embed all:migrations
+var embedMigrations embed.FS
+
+// Only expose the sql/ subdirectory to goose.
+sqlFS, err := fs.Sub(embedMigrations, "migrations/sql")
+if err != nil {
+    panic(err)
+}
+
+goose.SetBaseFS(sqlFS)
+
+if err := goose.Up(db, "."); err != nil {
+    panic(err)
+}
+```

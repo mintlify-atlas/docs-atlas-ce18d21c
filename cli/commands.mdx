@@ -1,0 +1,445 @@
+---
+title: "Commands"
+description: "Complete reference for every goose CLI command, with syntax, description, and examples."
+---
+
+Goose commands follow this general syntax:
+
+```bash
+goose DRIVER DBSTRING [OPTIONS] COMMAND
+```
+
+You can also set `GOOSE_DRIVER` and `GOOSE_DBSTRING` as environment variables (or in a `.env` file) to omit the driver and connection string on every call:
+
+```bash
+goose [OPTIONS] COMMAND
+```
+
+See [Environment Variables](/cli/environment-variables) for details.
+
+---
+
+## Migration commands
+
+<AccordionGroup>
+
+  <Accordion title="up — apply all pending migrations">
+    Migrate the database to the most recent version available. Goose runs every pending migration file in order, skipping any that have already been applied.
+
+    **Syntax**
+
+    ```bash
+    goose DRIVER DBSTRING up
+    ```
+
+    **Example**
+
+    ```bash
+    goose sqlite3 ./myapp.db up
+    ```
+
+    **Output**
+
+    ```
+    OK    20240101120000_create_users.sql
+    OK    20240102090000_add_email_column.sql
+    OK    20240103140000_create_posts.go
+    ```
+
+    <Tip>
+      Use `up-by-one` if you want to apply a single migration at a time and review the result before continuing.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="up-by-one — apply next pending migration">
+    Migrate the database up by exactly one migration from the current version.
+
+    **Syntax**
+
+    ```bash
+    goose DRIVER DBSTRING up-by-one
+    ```
+
+    **Example**
+
+    ```bash
+    goose sqlite3 ./myapp.db up-by-one
+    ```
+
+    **Output**
+
+    ```
+    OK    20240102090000_add_email_column.sql
+    ```
+  </Accordion>
+
+  <Accordion title="up-to VERSION — apply migrations up to a version">
+    Migrate the database up to and including a specific version number. Migrations with a version number greater than `VERSION` are not applied.
+
+    **Syntax**
+
+    ```bash
+    goose DRIVER DBSTRING up-to VERSION
+    ```
+
+    **Example**
+
+    ```bash
+    goose sqlite3 ./myapp.db up-to 20240102090000
+    ```
+
+    **Output**
+
+    ```
+    OK    20240101120000_create_users.sql
+    OK    20240102090000_add_email_column.sql
+    ```
+  </Accordion>
+
+  <Accordion title="down — roll back the latest migration">
+    Roll back the most recently applied migration by running its `-- +goose Down` section.
+
+    **Syntax**
+
+    ```bash
+    goose DRIVER DBSTRING down
+    ```
+
+    **Example**
+
+    ```bash
+    goose sqlite3 ./myapp.db down
+    ```
+
+    **Output**
+
+    ```
+    OK    20240103140000_create_posts.go
+    ```
+
+    <Warning>
+      If a migration file has no `-- +goose Down` section, the rollback is a no-op for that file but the version record is still removed from the tracking table.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="down-to VERSION — roll back to a specific version">
+    Roll back all migrations that were applied after `VERSION`. Pass `0` to roll back every migration.
+
+    **Syntax**
+
+    ```bash
+    goose DRIVER DBSTRING down-to VERSION
+    ```
+
+    **Examples**
+
+    Roll back to a specific version:
+
+    ```bash
+    goose sqlite3 ./myapp.db down-to 20240101120000
+    ```
+
+    Roll back all migrations:
+
+    ```bash
+    goose sqlite3 ./myapp.db down-to 0
+    ```
+
+    <Warning>
+      `down-to 0` rolls back every applied migration. Use with caution in production environments.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="redo — re-run the latest migration">
+    Roll back the most recently applied migration, then immediately re-apply it. Useful during development when iterating on a migration.
+
+    **Syntax**
+
+    ```bash
+    goose DRIVER DBSTRING redo
+    ```
+
+    **Example**
+
+    ```bash
+    goose sqlite3 ./myapp.db redo
+    ```
+
+    **Output**
+
+    ```
+    OK    20240103140000_create_posts.go
+    OK    20240103140000_create_posts.go
+    ```
+  </Accordion>
+
+  <Accordion title="reset — roll back all migrations">
+    Roll back every applied migration in reverse order, returning the database to a clean state.
+
+    **Syntax**
+
+    ```bash
+    goose DRIVER DBSTRING reset
+    ```
+
+    **Example**
+
+    ```bash
+    goose sqlite3 ./myapp.db reset
+    ```
+
+    <Warning>
+      `reset` is equivalent to `down-to 0`. It removes all schema changes tracked by goose. Do not run this against production data.
+    </Warning>
+  </Accordion>
+
+</AccordionGroup>
+
+---
+
+## Inspection commands
+
+<AccordionGroup>
+
+  <Accordion title="status — show migration status">
+    Print the applied and pending status of every migration file in the migrations directory.
+
+    **Syntax**
+
+    ```bash
+    goose DRIVER DBSTRING status
+    ```
+
+    **Example**
+
+    ```bash
+    goose sqlite3 ./myapp.db status
+    ```
+
+    **Output**
+
+    ```
+      Applied At                  Migration
+      =======================================
+      Sun Jan  6 11:25:03 2013 -- 001_basics.sql
+      Sun Jan  6 11:25:03 2013 -- 002_next.sql
+      Pending                  -- 003_and_again.go
+    ```
+
+    <Note>
+      For MySQL, the [`parseTime`](https://github.com/go-sql-driver/mysql#parsetime) flag must be enabled in the connection string for `Applied At` timestamps to display correctly.
+    </Note>
+  </Accordion>
+
+  <Accordion title="version — print the current database version">
+    Print the version number of the most recently applied migration.
+
+    **Syntax**
+
+    ```bash
+    goose DRIVER DBSTRING version
+    ```
+
+    **Example**
+
+    ```bash
+    goose sqlite3 ./myapp.db version
+    ```
+
+    **Output**
+
+    ```
+    goose: version 002
+    ```
+  </Accordion>
+
+</AccordionGroup>
+
+---
+
+## File management commands
+
+<AccordionGroup>
+
+  <Accordion title="create NAME [sql|go] — create a new migration file">
+    Create a new migration file with the current timestamp as its version prefix. The file is written to the directory specified by `-dir` (default: `.`).
+
+    **Syntax**
+
+    ```bash
+    goose create NAME [sql|go]
+    ```
+
+    **Examples**
+
+    Create a SQL migration:
+
+    ```bash
+    goose sqlite3 ./myapp.db create add_users_table sql
+    # Created new file: 20240103140000_add_users_table.sql
+    ```
+
+    Create a Go migration:
+
+    ```bash
+    goose sqlite3 ./myapp.db create fetch_user_data go
+    # Created new file: 20240103140001_fetch_user_data.go
+    ```
+
+    Use the `-s` flag to create sequentially numbered migrations instead of timestamp-prefixed ones:
+
+    ```bash
+    goose -s sqlite3 ./myapp.db create add_users_table sql
+    # Created new file: 00001_add_users_table.sql
+    ```
+
+    The generated SQL file includes the required `-- +goose Up` annotation and an optional `-- +goose Down` section. Edit the file to add your schema changes before applying.
+  </Accordion>
+
+  <Accordion title="fix — convert timestamps to sequential numbering">
+    Rename all timestamp-versioned migration files to use sequential numbering (`00001_`, `00002_`, …), preserving their existing order. This is useful when preparing development migrations for production deployment.
+
+    **Syntax**
+
+    ```bash
+    goose fix
+    ```
+
+    **Example**
+
+    ```bash
+    goose -dir ./migrations fix
+    ```
+
+    Before:
+
+    ```
+    20240101120000_create_users.sql
+    20240102090000_add_email_column.sql
+    ```
+
+    After:
+
+    ```
+    00001_create_users.sql
+    00002_add_email_column.sql
+    ```
+
+    <Tip>
+      Run `fix` in your CI pipeline when migrations are ready to ship to production. This avoids version conflicts when multiple developers create migrations concurrently during development.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="validate — check migration files without running them">
+    Parse and validate all migration files in the migrations directory without connecting to or modifying the database. This is useful in CI to catch syntax errors early.
+
+    **Syntax**
+
+    ```bash
+    goose validate
+    ```
+
+    **Example**
+
+    ```bash
+    goose -dir ./migrations validate
+    ```
+
+    Add `-v` to see a detailed report of each file:
+
+    ```bash
+    goose -v -dir ./migrations validate
+    ```
+
+    **Verbose output**
+
+    ```
+    Type   Txn   Up   Down   Name
+    ────   ───   ──   ────   ────
+    sql    ✔     1    1      00001_create_users.sql
+    sql    ✔     1    1      00002_add_email_column.sql
+    go     ✘     1    0      00003_fetch_user_data.go
+    ```
+
+    The columns show:
+
+    | Column | Description |
+    |--------|-------------|
+    | `Type` | File type: `sql` or `go` |
+    | `Txn`  | `✔` if the migration runs inside a transaction, `✘` if not |
+    | `Up`   | Number of `Up` statements |
+    | `Down` | Number of `Down` statements |
+    | `Name` | Migration file name |
+  </Accordion>
+
+  <Accordion title="init — create a migrations directory">
+    Create a `migrations` directory (or the directory specified by `-dir`) containing an initial SQL migration file. Use this to bootstrap a new project.
+
+    **Syntax**
+
+    ```bash
+    goose init
+    ```
+
+    **Example**
+
+    ```bash
+    goose init
+    ```
+
+    Goose creates the `migrations/` directory and writes an initial SQL file named with the current timestamp:
+
+    ```
+    Created new file: migrations/20240315120000_initial.sql
+    ```
+
+    The generated file includes the goose annotation format and placeholder statements:
+
+    ```sql
+    -- +goose Up
+    SELECT 'up SQL query';
+
+    -- +goose Down
+    SELECT 'down SQL query';
+    ```
+
+    Replace the placeholder statements with your actual schema changes.
+  </Accordion>
+
+</AccordionGroup>
+
+---
+
+## Utility commands
+
+<AccordionGroup>
+
+  <Accordion title="env — print environment variable configuration">
+    Print the current values of all goose environment variables. Useful for verifying which configuration goose is reading from your shell or `.env` file.
+
+    **Syntax**
+
+    ```bash
+    goose env
+    ```
+
+    **Example**
+
+    ```bash
+    goose env
+    ```
+
+    **Output**
+
+    ```
+    GOOSE_DRIVER="sqlite3"
+    GOOSE_DBSTRING="./myapp.db"
+    GOOSE_MIGRATION_DIR="./migrations"
+    GOOSE_TABLE=""
+    NO_COLOR="false"
+    ```
+
+    See [Environment Variables](/cli/environment-variables) for the full list of supported variables.
+  </Accordion>
+
+</AccordionGroup>

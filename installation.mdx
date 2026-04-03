@@ -1,0 +1,79 @@
+---
+title: "Installation"
+description: "Install the goose CLI on macOS, Linux, or Windows using Go, Homebrew, or a pre-built binary."
+---
+
+## Install goose
+
+<Tabs>
+  <Tab title="Go install">
+    If you have Go installed, use `go install` to build and install the latest version of the `goose` binary to your `$GOPATH/bin` directory:
+
+    ```bash
+    go install github.com/pressly/goose/v3/cmd/goose@latest
+    ```
+
+    Make sure `$GOPATH/bin` is on your `PATH` so you can run `goose` from anywhere.
+  </Tab>
+  <Tab title="Homebrew">
+    On macOS, goose is available as a [Homebrew formula](https://formulae.brew.sh/formula/goose):
+
+    ```bash
+    brew install goose
+    ```
+  </Tab>
+  <Tab title="Pre-built binary">
+    You can download a pre-built binary for Linux or macOS using the install script:
+
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/pressly/goose/master/install.sh | sh
+    ```
+
+    By default this installs to `/usr/local/bin`. To install a specific version, pass the version tag as an argument:
+
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/pressly/goose/master/install.sh | sh -s v3.24.0
+    ```
+
+    Pre-built binaries are also available on the [GitHub releases page](https://github.com/pressly/goose/releases) for Linux, macOS (amd64 and arm64), and Windows.
+  </Tab>
+</Tabs>
+
+## Verify the installation
+
+After installing, confirm goose is available and check its version:
+
+```bash
+goose --version
+```
+
+You should see output like:
+
+```
+goose version: v3.24.0
+```
+
+## Build a lite binary
+
+The default binary includes drivers for every supported database. If you only need support for a subset of databases, you can reduce binary size by excluding unused drivers with build tags.
+
+```bash
+go build -tags='no_postgres no_mysql no_sqlite3 no_ydb' -o goose ./cmd/goose
+```
+
+The following build tags are available:
+
+| Build tag | Excludes |
+|---|---|
+| `no_clickhouse` | ClickHouse driver |
+| `no_libsql` | libSQL / Turso driver |
+| `no_mssql` | Microsoft SQL Server driver |
+| `no_mysql` | MySQL / MariaDB driver |
+| `no_postgres` | PostgreSQL driver |
+| `no_sqlite3` | SQLite driver |
+| `no_vertica` | Vertica driver |
+| `no_ydb` | YDB driver |
+
+<Tip>
+  Combine multiple tags to create a minimal binary that only includes the drivers your application uses. For example, a service that only talks to Postgres can exclude all other drivers.
+</Tip>

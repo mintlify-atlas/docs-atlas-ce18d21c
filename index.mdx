@@ -1,97 +1,74 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Goose — Database Migration Tool"
+description: "Manage your database schema with incremental SQL changes or Go functions. Supports Postgres, MySQL, SQLite, ClickHouse, and more."
 ---
 
-## Setting up
+Goose is a database migration tool for Go. It lets you manage your database schema by creating incremental SQL files or Go functions — and run them forward or backward as your application evolves.
 
-Get your documentation site up and running in minutes.
+Use it as a **CLI tool** for interactive migration management, or embed it as a **Go library** in your application for programmatic control.
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install the goose CLI via Go, Homebrew, or pre-built binaries.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Run your first migration in under five minutes.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="SQL Migrations" icon="database" href="/migrations/sql-migrations">
+    Write incremental SQL changes with up and down support.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Go Migrations" icon="golang" href="/migrations/go-migrations">
+    Use Go functions for complex, programmatic migrations.
   </Card>
-</Columns>
+  <Card title="CLI Reference" icon="terminal" href="/cli/commands">
+    Full reference for every goose command and flag.
+  </Card>
+  <Card title="Go Library" icon="code" href="/library/quickstart">
+    Embed goose in your Go application using the Provider API.
+  </Card>
+</CardGroup>
 
-## Create beautiful pages
+## Supported databases
 
-Everything you need to create world-class documentation.
+Goose works with all major relational databases out of the box:
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+| Database | Driver |
+|---|---|
+| PostgreSQL | `postgres` |
+| MySQL / MariaDB | `mysql` |
+| SQLite | `sqlite3` |
+| ClickHouse | `clickhouse` |
+| Microsoft SQL Server | `mssql` |
+| Google Spanner | `spanner` |
+| YDB | `ydb` |
+| TiDB | `tidb` |
+| Turso (libSQL) | `turso` |
+| Amazon Redshift | `redshift` |
+| StarRocks | `starrocks` |
+| AWS Aurora DSQL | `dsql` |
 
-## Need inspiration?
+## Get started in three steps
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<Steps>
+  <Step title="Install goose">
+    ```bash
+    go install github.com/pressly/goose/v3/cmd/goose@latest
+    ```
+  </Step>
+  <Step title="Create your first migration">
+    ```bash
+    goose sqlite3 ./myapp.db create add_users_table sql
+    ```
+    Edit the generated file to add your SQL schema changes.
+  </Step>
+  <Step title="Apply migrations">
+    ```bash
+    goose sqlite3 ./myapp.db up
+    ```
+    Goose tracks which migrations have been applied and runs only the pending ones.
+  </Step>
+</Steps>
+
+<Tip>
+  Set `GOOSE_DRIVER` and `GOOSE_DBSTRING` environment variables (or a `.env` file) to avoid repeating the driver and connection string on every command.
+</Tip>

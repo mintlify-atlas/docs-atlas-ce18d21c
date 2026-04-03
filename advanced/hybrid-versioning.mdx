@@ -1,0 +1,126 @@
+---
+title: "Hybrid Versioning"
+description: "Combine timestamp and sequential versioning to prevent migration conflicts in team environments."
+---
+
+In a team environment, multiple developers may create migrations at the same time. Because goose defaults to timestamp-based versioning (`20060102150405`), two developers creating a migration within the same second — or even in the same working branch — can produce files with the same version number. When both branches are merged, goose sees a version conflict that blocks the migration run.
+
+The hybrid versioning approach resolves this by keeping timestamps during local development (so conflicts are easy to spot and cheap to fix in code review), then converting to sequential numbers before deploying to production.
+
+## How versioning works
+
+### Timestamp versioning (default)
+
+When you run `goose create`, the version prefix is the current UTC time formatted as `20060102150405`:
+
+```bash
+goose create add_users_table sql
+# Created new file: 20240315093045_add_users_table.sql
+
+goose create add_email_index sql
+# Created new file: 20240315093102_add_email_index.sql
+```
+
+Every developer working simultaneously gets a unique timestamp, but two branches can easily contain migrations numbered identically if both are created around the same time.
+
+### Sequential versioning with `-s`
+
+Pass `-s` to use a zero-padded five-digit counter (`00001`, `00002`, …) instead:
+
+```bash
+goose -s create add_users_table sql
+# Created new file: 00001_add_users_table.sql
+```
+
+Sequential mode looks at the existing migration files in the directory and increments from the highest version. This is deterministic but causes conflicts when two developers create migrations from the same base.
+
+## The hybrid approach
+
+The recommended workflow is:
+
+- **Development:** use the default timestamp mode. Conflicts show up as two files with different names, which is easy to review and resolve.
+- **Before production:** run `goose fix` in CI to convert all timestamp-prefixed files to sequential order, preserving their relative ordering.
+- **Production:** deploy and run the sequential migrations.
+
+<Steps>
+  <Step title="During development, create migrations with timestamps">
+    Use `goose create` normally. Each developer gets their own timestamp prefix, so merging branches rarely causes version conflicts.
+
+    ```bash
+    # Developer A
+    goose create add_users_table sql
+    # 20240315093045_add_users_table.sql
+
+    # Developer B (working in parallel)
+    goose create add_billing_table sql
+    # 20240315094210_add_billing_table.sql
+    ```
+  </Step>
+  <Step title="Before production, run goose fix in CI">
+    Add `goose fix` to your CI pipeline after all branches are merged. It renames every timestamp-prefixed file to a sequential number, keeping the files sorted by their original timestamp order.
+
+    ```bash
+    goose fix
+    # RENAMED 20240315093045_add_users_table.sql   => 00001_add_users_table.sql
+    # RENAMED 20240315094210_add_billing_table.sql => 00002_add_billing_table.sql
+    ```
+  </Step>
+  <Step title="Deploy sequential migrations to production">
+    Commit the renamed files and deploy. Production always receives a clean, gap-free sequential history.
+
+    ```bash
+    git add migrations/
+    git commit -m "fix: convert migrations to sequential order"
+    ```
+  </Step>
+</Steps>
+
+## Before and after `goose fix`
+
+**Before** (timestamp filenames, as created by developers):
+
+```
+migrations/
+├── 20240315093045_add_users_table.sql
+├── 20240315094210_add_billing_table.sql
+├── 20240316110532_add_payment_method.sql
+└── 20240317082001_add_invoice_index.sql
+```
+
+**After** `goose fix` (sequential filenames, timestamp ordering preserved):
+
+```
+migrations/
+├── 00001_add_users_table.sql
+├── 00002_add_billing_table.sql
+├── 00003_add_payment_method.sql
+└── 00004_add_invoice_index.sql
+```
+
+`goose fix` uses a five-digit zero-padded format (`%05v`) and begins numbering from 1, or from the next number after any already-sequential migrations in the directory.
+
+<Warning>
+  Run `goose fix` only after all branches that add migrations have been merged. Running it on a feature branch means the sequential numbers will conflict when you merge — the exact problem hybrid versioning is designed to avoid.
+</Warning>
+
+## Out-of-order migrations
+
+By default, goose raises an error if it detects a migration that is lower than the current applied version — a situation that can happen when hotfix branches are merged after a sequential deployment.
+
+If you need to apply out-of-order migrations, pass the `-allow-missing` flag on the CLI:
+
+```bash
+goose -allow-missing postgres "$DBSTRING" up
+```
+
+Or supply `WithAllowOutofOrder` when using the `Provider` API:
+
+```go
+provider, err := goose.NewProvider(goose.DialectPostgres, db, fsys,
+    goose.WithAllowOutofOrder(true),
+)
+```
+
+<Warning>
+  Out-of-order migrations can leave your schema in an unexpected state. Use this option only when you understand the ordering implications, and prefer the hybrid workflow over relying on it regularly.
+</Warning>

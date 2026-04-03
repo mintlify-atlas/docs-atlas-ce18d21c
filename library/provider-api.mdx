@@ -1,0 +1,471 @@
+---
+title: "Provider API"
+description: "Complete reference for goose.NewProvider, all Provider methods, ProviderOptions, dialects, and error variables."
+---
+
+## NewProvider
+
+```go
+func NewProvider(dialect Dialect, db *sql.DB, fsys fs.FS, opts ...ProviderOption) (*Provider, error)
+```
+
+`NewProvider` creates a new migration provider. It collects migration sources from `fsys`, merges them with any registered Go migrations, and validates the result. It returns `ErrNoMigrations` if no migrations are found.
+
+**Parameters**
+
+<ParamField path="dialect" type="Dialect" required>
+  The database dialect. Use one of the [dialect constants](#dialects) below. Pass `DialectCustom` when you supply a custom store via `WithStore`.
+</ParamField>
+
+<ParamField path="db" type="*sql.DB" required>
+  An open database connection pool. You are responsible for choosing a `database/sql` driver that matches the dialect — for example, `github.com/lib/pq` or `github.com/jackc/pgx/v5/stdlib` for PostgreSQL.
+</ParamField>
+
+<ParamField path="fsys" type="fs.FS" required>
+  The filesystem to read migration files from. Use `os.DirFS("path/to/migrations")` for local files, or an `embed.FS` for embedded binaries. Pass `nil` if you are using only Go migrations registered via `WithGoMigrations` or the global registry.
+</ParamField>
+
+<ParamField path="opts" type="...ProviderOption">
+  Zero or more [provider options](#provider-options).
+</ParamField>
+
+All methods on `Provider` are safe for concurrent use.
+
+---
+
+## Provider methods
+
+### Up
+
+```go
+func (p *Provider) Up(ctx context.Context) ([]*MigrationResult, error)
+```
+
+Applies all pending migrations in ascending version order. Returns an empty slice and `nil` error when there is nothing to apply — safe to call on every application start.
+
+Returns `*PartialError` if a migration fails after one or more have already been applied.
+
+---
+
+### UpByOne
+
+```go
+func (p *Provider) UpByOne(ctx context.Context) (*MigrationResult, error)
+```
+
+Applies the next pending migration only. Returns `ErrNoNextVersion` when there are no pending migrations.
+
+---
+
+### UpTo
+
+```go
+func (p *Provider) UpTo(ctx context.Context, version int64) ([]*MigrationResult, error)
+```
+
+Applies all pending migrations up to and including `version`. For example, if versions 9, 10, and 11 are pending and you call `UpTo(ctx, 10)`, only versions 9 and 10 are applied.
+
+Returns an empty slice and `nil` error when there is nothing to apply.
+
+---
+
+### Down
+
+```go
+func (p *Provider) Down(ctx context.Context) (*MigrationResult, error)
+```
+
+Rolls back the most recently applied migration. Migrations are rolled back in the order they were applied, not in reverse version order — this matters only when out-of-order migrations are enabled.
+
+Returns `ErrNoNextVersion` when there are no applied migrations to roll back.
+
+---
+
+### DownTo
+
+```go
+func (p *Provider) DownTo(ctx context.Context, version int64) ([]*MigrationResult, error)
+```
+
+Rolls back all migrations down to, but not including, `version`. For example, if versions 11, 10, and 9 are applied and you call `DownTo(ctx, 9)`, versions 11 and 10 are rolled back; version 9 remains.
+
+Pass `0` to roll back all migrations.
+
+---
+
+### ApplyVersion
+
+```go
+func (p *Provider) ApplyVersion(ctx context.Context, version int64, direction bool) (*MigrationResult, error)
+```
+
+Applies exactly one migration for the given `version`. Pass `true` for an up migration and `false` for a down migration.
+
+Returns `ErrVersionNotFound` if no migration exists for that version. Returns `ErrAlreadyApplied` if you attempt to apply an already-applied migration, or `ErrNotApplied` if you attempt to roll back a migration that was never applied.
+
+---
+
+### Status
+
+```go
+func (p *Provider) Status(ctx context.Context) ([]*MigrationStatus, error)
+```
+
+Returns the status of every known migration, sorted in ascending version order. Each entry reports whether the migration is `pending` or `applied`, and when it was applied.
+
+---
+
+### HasPending
+
+```go
+func (p *Provider) HasPending(ctx context.Context) (bool, error)
+```
+
+Returns `true` if there are pending migrations. Returns an error if out-of-order migrations are detected and `WithAllowOutofOrder` is not enabled.
+
+<Note>
+  `HasPending` does **not** acquire a lock even when a `SessionLocker` or `Locker` is configured. This is intentional — it lets you poll for pending migrations without blocking or being blocked by other operations.
+</Note>
+
+---
+
+### GetVersions
+
+```go
+func (p *Provider) GetVersions(ctx context.Context) (current, target int64, err error)
+```
+
+Returns the current database version (highest applied) and the target version (highest known migration). Useful for health checks or pre-flight validation.
+
+<Note>
+  Like `HasPending`, this method does not acquire a lock.
+</Note>
+
+---
+
+### GetDBVersion
+
+```go
+func (p *Provider) GetDBVersion(ctx context.Context) (int64, error)
+```
+
+Returns the highest version recorded in the database, regardless of the order in which migrations were applied. Returns `0` if no migrations have been applied. Returns an error when `WithDisableVersioning` is enabled.
+
+---
+
+### ListSources
+
+```go
+func (p *Provider) ListSources() []*Source
+```
+
+Returns a list of all migration sources known to the provider, sorted in ascending version order. The `Path` field may be empty for Go migrations registered manually via `WithGoMigrations`.
+
+---
+
+### Ping
+
+```go
+func (p *Provider) Ping(ctx context.Context) error
+```
+
+Pings the database to verify the connection is alive. Useful for readiness checks before running migrations.
+
+---
+
+### Close
+
+```go
+func (p *Provider) Close() error
+```
+
+Closes the underlying `*sql.DB` that was passed to `NewProvider`. Call this when the provider is no longer needed.
+
+---
+
+## Provider options
+
+Pass these to `NewProvider` to customise behaviour.
+
+### WithStore
+
+```go
+func WithStore(store database.Store) ProviderOption
+```
+
+Provides a custom `database.Store` implementation. When using this option, set `dialect` to `DialectCustom`. Cannot be used together with `WithTableName`.
+
+---
+
+### WithTableName
+
+```go
+func WithTableName(name string) ProviderOption
+```
+
+Sets the name of the table used to track applied migrations. Default is `goose_db_version`. Cannot be used with `WithStore`.
+
+---
+
+### WithVerbose
+
+```go
+func WithVerbose(b bool) ProviderOption
+```
+
+Enables verbose logging of every SQL statement and migration event.
+
+---
+
+### WithSessionLocker
+
+```go
+func WithSessionLocker(locker lock.SessionLocker) ProviderOption
+```
+
+Enables advisory session-level locking. The lock is acquired on a single `*sql.Conn` and released when migrations complete. Cannot be combined with `WithLocker`. See [Distributed locking](/library/locking).
+
+---
+
+### WithLocker
+
+```go
+func WithLocker(locker lock.Locker) ProviderOption
+```
+
+Enables table-based locking via `*sql.DB`. Lock and unlock calls may use different connections. Cannot be combined with `WithSessionLocker`. See [Distributed locking](/library/locking).
+
+---
+
+### WithExcludeNames
+
+```go
+func WithExcludeNames(excludes []string) ProviderOption
+```
+
+Excludes specific migration files by filename. If called multiple times, the lists are merged.
+
+```go
+goose.WithExcludeNames([]string{"00003_seed_data.sql"})
+```
+
+---
+
+### WithExcludeVersions
+
+```go
+func WithExcludeVersions(versions []int64) ProviderOption
+```
+
+Excludes migrations by version number. If called multiple times, the lists are merged.
+
+```go
+goose.WithExcludeVersions([]int64{3, 7})
+```
+
+---
+
+### WithGoMigrations
+
+```go
+func WithGoMigrations(migrations ...*Migration) ProviderOption
+```
+
+Registers Go migrations with this provider instance. Migrations must be constructed with `NewGoMigration`. Useful when you want to scope migrations to a specific provider rather than registering them globally.
+
+```go
+m := goose.NewGoMigration(
+    1,
+    &goose.GoFunc{RunTx: func(ctx context.Context, tx *sql.Tx) error {
+        _, err := tx.ExecContext(ctx, "CREATE TABLE users (id SERIAL PRIMARY KEY)")
+        return err
+    }},
+    nil, // no down migration
+)
+
+provider, err := goose.NewProvider(
+    goose.DialectPostgres,
+    db,
+    nil,
+    goose.WithGoMigrations(m),
+)
+```
+
+---
+
+### WithDisableGlobalRegistry
+
+```go
+func WithDisableGlobalRegistry(b bool) ProviderOption
+```
+
+Prevents the provider from picking up migrations registered in the global registry via `AddMigrationContext` or `SetGlobalMigrations`. Useful for testing or when you want full control over which migrations are included.
+
+---
+
+### WithAllowOutofOrder
+
+```go
+func WithAllowOutofOrder(b bool) ProviderOption
+```
+
+Allows the provider to apply missing (out-of-order) migrations without returning an error. For example: if versions 1 and 3 are applied, and version 2 is later introduced, goose applies version 2 first, then any newer versions. The final applied order would be `1, 3, 2, ...`.
+
+By default, goose returns an error when it detects an unapplied older migration.
+
+---
+
+### WithDisableVersioning
+
+```go
+func WithDisableVersioning(b bool) ProviderOption
+```
+
+Runs migrations without recording applied versions in the tracking table. Every call to `Up` applies all migrations regardless of what has run before. Useful for seeding data or running ad-hoc queries in tests.
+
+---
+
+### WithLogger
+
+```go
+func WithLogger(l Logger) ProviderOption
+```
+
+Sets a custom logger implementing the `Logger` interface. Cannot be used with `WithSlog`.
+
+---
+
+### WithSlog
+
+```go
+func WithSlog(logger *slog.Logger) ProviderOption
+```
+
+Sets a structured `*slog.Logger`. Migrations are logged with attributes such as `source`, `direction`, and `duration`. Cannot be used with `WithLogger`.
+
+```go
+logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+provider, err := goose.NewProvider(
+    goose.DialectPostgres,
+    db,
+    os.DirFS("migrations"),
+    goose.WithSlog(logger),
+)
+```
+
+---
+
+### WithIsolateDDL
+
+```go
+func WithIsolateDDL(b bool) ProviderOption
+```
+
+Executes DDL statements separately from DML statements. Required for databases like AWS Aurora DSQL that do not support mixing DDL and DML within the same transaction.
+
+---
+
+## Dialects
+
+Pass one of these constants as the first argument to `NewProvider`.
+
+| Constant | Value | Database |
+|---|---|---|
+| `goose.DialectPostgres` | `"postgres"` | PostgreSQL |
+| `goose.DialectMySQL` | `"mysql"` | MySQL / MariaDB |
+| `goose.DialectSQLite3` | `"sqlite3"` | SQLite |
+| `goose.DialectClickHouse` | `"clickhouse"` | ClickHouse |
+| `goose.DialectMSSQL` | `"mssql"` | Microsoft SQL Server |
+| `goose.DialectSpanner` | `"spanner"` | Google Cloud Spanner |
+| `goose.DialectYdB` | `"ydb"` | Yandex Database |
+| `goose.DialectTiDB` | `"tidb"` | TiDB |
+| `goose.DialectTurso` | `"turso"` | Turso (libSQL) |
+| `goose.DialectRedshift` | `"redshift"` | Amazon Redshift |
+| `goose.DialectStarrocks` | `"starrocks"` | StarRocks |
+| `goose.DialectAuroraDSQL` | `"dsql"` | AWS Aurora DSQL |
+| `goose.DialectCustom` | `""` | Bring your own store (`WithStore`) |
+
+---
+
+## Types
+
+### MigrationResult
+
+Returned by `Up`, `UpByOne`, `UpTo`, `Down`, `DownTo`, and `ApplyVersion`.
+
+```go
+type MigrationResult struct {
+    Source    *Source
+    Duration  time.Duration
+    Direction string // "up" or "down"
+    Empty     bool   // true when no SQL statements or Go function were executed
+    Error     error  // non-nil only on failure
+}
+```
+
+Calling `.String()` on a `MigrationResult` returns a formatted line such as:
+
+```
+OK    up 00001_create_users.sql (4.21ms)
+EMPTY up 00002_noop.sql (312µs)
+```
+
+### MigrationStatus
+
+Returned by `Status`.
+
+```go
+type MigrationStatus struct {
+    Source    *Source
+    State     State     // "pending" or "applied"
+    AppliedAt time.Time // zero value when pending
+}
+```
+
+### Source
+
+Embedded in both `MigrationResult` and `MigrationStatus`. Also returned directly by `ListSources`.
+
+```go
+type Source struct {
+    Type    MigrationType // "sql" or "go"
+    Path    string        // may be empty for manually registered Go migrations
+    Version int64
+}
+```
+
+---
+
+## Errors
+
+| Variable | Description |
+|---|---|
+| `goose.ErrNoMigrations` | Returned by `NewProvider` when no migration files or registered migrations are found. |
+| `goose.ErrNoNextVersion` | Returned by `UpByOne` and `Down` when there is no migration to apply or roll back. |
+| `goose.ErrAlreadyApplied` | Returned by `ApplyVersion` when the requested version is already applied. |
+| `goose.ErrNotApplied` | Returned by `ApplyVersion` (down direction) when the requested version has not been applied. |
+| `goose.ErrVersionNotFound` | Returned by `ApplyVersion` when no migration source exists for the requested version. |
+
+### PartialError
+
+When `Up`, `UpTo`, or `DownTo` fails mid-run, the error is a `*PartialError`:
+
+```go
+type PartialError struct {
+    Applied []*MigrationResult // migrations that succeeded before the failure
+    Failed  *MigrationResult   // the migration that caused the failure
+    Err     error              // the underlying error
+}
+```
+
+```go
+results, err := provider.Up(ctx)
+if err != nil {
+    var partial *goose.PartialError
+    if errors.As(err, &partial) {
+        log.Printf("%d migration(s) applied before failure", len(partial.Applied))
+        log.Printf("failed at version %d: %v", partial.Failed.Source.Version, partial.Err)
+    }
+    log.Fatal(err)
+}
+```

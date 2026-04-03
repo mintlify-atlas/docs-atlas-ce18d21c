@@ -1,0 +1,227 @@
+---
+title: "Go migrations"
+description: "Write migration logic as Go functions for cases that SQL alone cannot handle."
+---
+
+Go migrations let you express migration logic in Go code — useful for data transformations, calling external APIs, or any operation that is difficult to express in plain SQL.
+
+<Warning>
+The standard `goose` binary cannot run Go migrations. You must build your own binary that imports your migration package. See [building a custom binary](#building-a-custom-binary) below.
+</Warning>
+
+## File naming
+
+Go migration files follow the same naming convention as SQL migrations. The filename must begin with a numeric version component followed by an underscore:
+
+```
+00001_create_users_table.go
+00002_rename_root.go
+20240101120000_backfill_emails.go
+```
+
+Files must not end with `_test.go`.
+
+## Registering migrations
+
+There are two ways to register Go migrations: globally via `init()`, or at the provider level.
+
+### Global registration via init()
+
+Call `goose.AddMigrationContext` inside an `init()` function in your migration file. Goose uses `runtime.Caller` to infer the filename and version automatically.
+
+**Transactional migration** (receives `*sql.Tx`):
+
+```go
+package migrations
+
+import (
+    "context"
+    "database/sql"
+
+    "github.com/pressly/goose/v3"
+)
+
+func init() {
+    goose.AddMigrationContext(Up00002, Down00002)
+}
+
+func Up00002(ctx context.Context, tx *sql.Tx) error {
+    _, err := tx.ExecContext(ctx, "UPDATE users SET username='admin' WHERE username='root';")
+    return err
+}
+
+func Down00002(ctx context.Context, tx *sql.Tx) error {
+    _, err := tx.ExecContext(ctx, "UPDATE users SET username='root' WHERE username='admin';")
+    return err
+}
+```
+
+**Non-transactional migration** (receives `*sql.DB`):
+
+Use `goose.AddMigrationNoTxContext` when you need access to the full database connection — for example, to query the database before deciding whether to insert a row:
+
+```go
+package migrations
+
+import (
+    "context"
+    "database/sql"
+    "errors"
+
+    "github.com/pressly/goose/v3"
+)
+
+func init() {
+    goose.AddMigrationNoTxContext(Up00003, Down00003)
+}
+
+func Up00003(ctx context.Context, db *sql.DB) error {
+    id, err := getUserID(db, "jamesbond")
+    if err != nil {
+        return err
+    }
+    if id == 0 {
+        query := "INSERT INTO users (username, name, surname) VALUES ($1, $2, $3)"
+        if _, err := db.ExecContext(ctx, query, "jamesbond", "James", "Bond"); err != nil {
+            return err
+        }
+    }
+    return nil
+}
+
+func getUserID(db *sql.DB, username string) (int, error) {
+    var id int
+    err := db.QueryRow("SELECT id FROM users WHERE username = $1", username).Scan(&id)
+    if err != nil && !errors.Is(err, sql.ErrNoRows) {
+        return 0, err
+    }
+    return id, nil
+}
+
+func Down00003(ctx context.Context, db *sql.DB) error {
+    query := "DELETE FROM users WHERE username = $1"
+    if _, err := db.ExecContext(ctx, query, "jamesbond"); err != nil {
+        return err
+    }
+    return nil
+}
+```
+
+### Provider-level registration via WithGoMigrations
+
+When using the [Provider API](/library/provider-api), you can pass migrations directly using `WithGoMigrations` instead of relying on global state. Construct each migration with `goose.NewGoMigration`:
+
+```go
+m := goose.NewGoMigration(
+    4, // version
+    &goose.GoFunc{
+        RunTx: func(ctx context.Context, tx *sql.Tx) error {
+            _, err := tx.ExecContext(ctx, "ALTER TABLE users ADD COLUMN email TEXT")
+            return err
+        },
+    },
+    &goose.GoFunc{
+        RunTx: func(ctx context.Context, tx *sql.Tx) error {
+            _, err := tx.ExecContext(ctx, "ALTER TABLE users DROP COLUMN email")
+            return err
+        },
+    },
+)
+```
+
+## The GoFunc struct
+
+`GoFunc` controls how goose executes a migration function:
+
+```go
+type GoFunc struct {
+    // Exactly one of these must be set, or both must be nil.
+    RunTx func(ctx context.Context, tx *sql.Tx) error
+    // -- OR --
+    RunDB func(ctx context.Context, db *sql.DB) error
+
+    // Mode is inferred automatically from which Run field is set.
+    // Set it explicitly only when both Run fields are nil.
+    Mode TransactionMode
+}
+```
+
+| Field | Description |
+|---|---|
+| `RunTx` | Runs inside a transaction. Goose sets `TransactionEnabled` automatically. |
+| `RunDB` | Runs outside a transaction. Goose sets `TransactionDisabled` automatically. |
+| `Mode` | Only needed when both `RunTx` and `RunDB` are nil (to record a version without running code). |
+
+## Building a custom binary
+
+Because Go migrations must be compiled into the binary, you need to build your own goose binary that imports your migrations package.
+
+<Steps>
+  <Step title="Create a migrations package">
+    Put your migration files in a package, for example `migrations/`. Each file calls `goose.AddMigrationContext` or `goose.AddMigrationNoTxContext` in its `init()` function.
+  </Step>
+  <Step title="Create a main.go that imports your migrations">
+    Use a blank import to ensure the `init()` functions in your migration files are executed:
+
+    ```go
+    package main
+
+    import (
+        "context"
+        "flag"
+        "log"
+        "os"
+
+        "github.com/pressly/goose/v3"
+        _ "modernc.org/sqlite"
+
+        _ "github.com/me/myapp/migrations"
+    )
+
+    var (
+        flags = flag.NewFlagSet("goose", flag.ExitOnError)
+        dir   = flags.String("dir", ".", "directory with migration files")
+    )
+
+    func main() {
+        if err := flags.Parse(os.Args[1:]); err != nil {
+            log.Fatalf("goose: failed to parse flags: %v", err)
+        }
+        args := flags.Args()
+
+        if len(args) < 3 {
+            flags.Usage()
+            return
+        }
+
+        dbstring, command := args[1], args[2]
+
+        db, err := goose.OpenDBWithDriver("sqlite", dbstring)
+        if err != nil {
+            log.Fatalf("goose: failed to open DB: %v", err)
+        }
+        defer func() {
+            if err := db.Close(); err != nil {
+                log.Fatalf("goose: failed to close DB: %v", err)
+            }
+        }()
+
+        arguments := []string{}
+        if len(args) > 3 {
+            arguments = append(arguments, args[3:]...)
+        }
+
+        ctx := context.Background()
+        if err := goose.RunContext(ctx, command, db, *dir, arguments...); err != nil {
+            log.Fatalf("goose %v: %v", command, err)
+        }
+    }
+    ```
+  </Step>
+  <Step title="Build and run your binary">
+    ```bash
+    go build -o mygoose ./cmd/mygoose
+    ./mygoose sqlite3 ./myapp.db up
+    ```
+  </Step>
+</Steps>
